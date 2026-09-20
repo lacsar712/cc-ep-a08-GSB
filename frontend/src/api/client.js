@@ -22,6 +22,10 @@ api.interceptors.response.use(
       err.message = detail
     } else if (Array.isArray(detail)) {
       err.message = detail.map((d) => d.msg || JSON.stringify(d)).join('; ')
+    } else if (detail && typeof detail === 'object') {
+      // 协议检查失败：{ message, checks }
+      err.message = detail.message || '协议检查未通过'
+      err.preconditionChecks = detail.checks || []
     }
     return Promise.reject(err)
   },
@@ -39,6 +43,11 @@ export async function listRuns(params = {}) {
 
 export async function getRun(id) {
   const { data } = await api.get(`/runs/${id}`)
+  return data
+}
+
+export async function getPreconditions(id) {
+  const { data } = await api.get(`/runs/${id}/preconditions`)
   return data
 }
 

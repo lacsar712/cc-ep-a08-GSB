@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.checklist import PreconditionError, require_preconditions
 from app.models import EventStore, RunProjection
 
 
@@ -259,6 +260,7 @@ def complete_run(
     proj = _get_projection(db, run_id)
     _require_running(proj)
     _check_expected_version(proj, expected_version)
+    require_preconditions(proj)
 
     event = _append_event(
         db,

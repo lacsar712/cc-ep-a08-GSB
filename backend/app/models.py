@@ -43,3 +43,10 @@ class RunProjection(Base):
     artifacts_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     abort_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    @property
+    def preconditions(self) -> list[dict]:
+        # 延迟导入以避免 models <-> checklist 循环依赖
+        from app.checklist import evaluate_preconditions
+
+        return evaluate_preconditions(self)

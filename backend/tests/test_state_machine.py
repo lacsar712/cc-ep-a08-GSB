@@ -77,15 +77,28 @@ def test_start_and_complete_happy_path(db):
     assert run.version == 2
     assert len(run.metrics_json) == 1
 
+    run = attach_artifact(
+        db,
+        run_id=run.id,
+        actor="researcher",
+        name="model.bin",
+        uri="s3://lab-artifacts/model.bin",
+        content_sha256=sha("model"),
+        media_type="application/octet-stream",
+        expected_version=2,
+    )
+    assert run.version == 3
+    assert len(run.artifacts_json) == 1
+
     run = complete_run(
         db,
         run_id=run.id,
         actor="researcher",
         result_summary="done",
-        expected_version=2,
+        expected_version=3,
     )
     assert run.status == "completed"
-    assert run.version == 3
+    assert run.version == 4
 
     with pytest.raises(ConflictError):
         record_metric(
@@ -95,7 +108,7 @@ def test_start_and_complete_happy_path(db):
             name="acc",
             value=0.95,
             step=2,
-            expected_version=3,
+            expected_version=4,
         )
 
 

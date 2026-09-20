@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import authenticate_user, create_access_token, get_current_user, require_researcher
+from app.checklist import PreconditionError, evaluate_preconditions
 from app.cqrs import (
     ConflictError,
     DomainError,
@@ -24,6 +25,7 @@ from app.schemas import (
     EventOut,
     LineageOut,
     LoginRequest,
+    PreconditionChecklistOut,
     RecordMetricCommand,
     RunOut,
     StartRunCommand,
@@ -35,6 +37,18 @@ router = APIRouter(prefix="/api")
 
 def _handle_domain(exc: DomainError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+def _handle_complete_error(exc: Exception) -> None:
+    if isinstance(exc, PreconditionError):
+        # 422 + 逐项缺口，前端可直接指出未通过的协议项
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"message": exc.message, "checks": exc.checks},
+        )
+    if isinstance(exc, DomainError):
+        _handle_domain(exc)
+    raise exc
 
 
 @router.get("/health")
@@ -161,8 +175,27 @@ def post_complete(
             result_summary=body.result_summary,
             expected_version=body.expected_version,
         )
-    except DomainError as exc:
-        _handle_domain(exc)
+    except (DomainError, PreconditionError) as exc:
+        _handle_complete_error(exc)
+
+
+@router.get("/runs/{run_id}/preconditions", response_model=PreconditionChecklistOut)
+def get_preconditions(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    """协议检查结果：研究员与审计员均可只读查看，不含任何写操作。"""
+    proj = db.get(RunProjection, run_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Run 不存在")
+    checks = evaluate_preconditions(proj)
+    return PreconditionChecklistOut(
+        run_id=proj.id,
+        status=proj.status,
+        all_passed=all(c["passed"] for c in checks),
+        checks=checks,
+    )
 
 
 @router.post("/runs/{run_id}/abort", response_model=RunOut)

@@ -51,6 +51,20 @@ class TokenResponse(BaseModel):
     username: str
 
 
+class PreconditionCheckOut(BaseModel):
+    key: str
+    label: str
+    passed: bool
+    detail: str
+
+
+class PreconditionChecklistOut(BaseModel):
+    run_id: UUID
+    status: str
+    all_passed: bool
+    checks: list[PreconditionCheckOut]
+
+
 class RunOut(BaseModel):
     id: UUID
     project: str
@@ -67,6 +81,7 @@ class RunOut(BaseModel):
     artifacts_json: list[Any]
     result_summary: str | None
     abort_reason: str | None
+    preconditions: list[PreconditionCheckOut]
 
     model_config = {"from_attributes": True}
 

@@ -39,6 +39,42 @@
       <p v-if="run.abort_reason"><strong>中止原因：</strong>{{ run.abort_reason }}</p>
     </div>
 
+    <div class="card" style="margin-bottom: 16px" data-testid="precondition-checklist">
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap">
+        <h3 style="margin: 0">收尾协议检查</h3>
+        <n-tag :type="allPreconditionsPassed ? 'success' : 'error'" size="small">
+          {{ allPreconditionsPassed ? '全部通过，可以完成' : `${failedChecks.length} 项未通过，不能完成` }}
+        </n-tag>
+      </div>
+      <p class="muted" style="margin: 6px 0 12px">
+        完成实验前须逐项通过以下协议；检查结果对研究员与审计员公开，审计员只读、不能代为完成。
+      </p>
+      <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+        <li
+          v-for="c in preconditionChecks"
+          :key="c.key"
+          :data-testid="`check-${c.key}`"
+          :data-passed="c.passed"
+          style="display: flex; gap: 10px; align-items: flex-start"
+        >
+          <n-tag :type="c.passed ? 'success' : 'error'" size="small" style="margin-top: 2px">
+            {{ c.passed ? '通过' : '未通过' }}
+          </n-tag>
+          <div>
+            <div :style="c.passed ? '' : 'color: #d03050; font-weight: 600'">{{ c.label }}</div>
+            <div class="muted" style="font-size: 13px">{{ c.detail }}</div>
+          </div>
+        </li>
+      </ul>
+      <p
+        v-if="canWrite && !allPreconditionsPassed"
+        style="margin: 12px 0 0; color: #d03050"
+        data-testid="complete-guard-hint"
+      >
+        缺口：{{ failedChecks.map((c) => c.label).join('；') }}。请补齐后再完成。
+      </p>
+    </div>
+
     <div class="grid-2" style="margin-bottom: 16px">
       <div class="card">
         <h3 style="margin-top: 0">指标（投影）</h3>
@@ -85,7 +121,20 @@
         <div style="flex: 1; min-width: 220px">
           <n-input v-model:value="completeSummary" type="textarea" placeholder="完成摘要" :rows="2" />
         </div>
-        <n-button type="success" :loading="busy" @click="doComplete">CompleteRun</n-button>
+        <n-tooltip :disabled="allPreconditionsPassed" trigger="hover">
+          <template #trigger>
+            <span style="display: inline-flex">
+              <n-button
+                type="success"
+                :loading="busy"
+                :disabled="!allPreconditionsPassed"
+                data-testid="complete-run-btn"
+                @click="doComplete"
+              >CompleteRun</n-button>
+            </span>
+          </template>
+          协议检查未全部通过，无法完成实验
+        </n-tooltip>
         <div style="flex: 1; min-width: 220px">
           <n-input v-model:value="abortReason" type="textarea" placeholder="中止原因" :rows="2" />
         </div>
@@ -126,6 +175,13 @@ const artifact = reactive({
 })
 
 const canWrite = computed(() => auth.role === 'researcher' && run.value?.status === 'running')
+
+// 协议检查结果由后端计算（RunOut.preconditions）；此处仅作展示与按钮拦截的派生
+const preconditionChecks = computed(() => run.value?.preconditions || [])
+const failedChecks = computed(() => preconditionChecks.value.filter((c) => !c.passed))
+const allPreconditionsPassed = computed(
+  () => preconditionChecks.value.length > 0 && failedChecks.value.length === 0,
+)
 const statusLabel = computed(() => {
   const m = { running: '进行中', completed: '已完成', aborted: '已中止' }
   return m[run.value?.status] || run.value?.status
@@ -200,6 +256,13 @@ function doArtifact() {
 function doComplete() {
   if (!completeSummary.value.trim()) {
     message.warning('请填写完成摘要')
+    return
+  }
+  // 双保险：按钮已禁用，提交前仍再拦一次（服务端也会强制校验）
+  if (!allPreconditionsPassed.value) {
+    message.error(
+      `协议检查未通过，无法完成实验，缺口：${failedChecks.value.map((c) => c.label).join('；')}`,
+    )
     return
   }
   return withBusy(() =>
