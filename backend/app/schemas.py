@@ -71,6 +71,20 @@ class RunOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CompletionCheckOut(BaseModel):
+    key: str
+    label: str
+    passed: bool
+
+
+class CompletionChecksOut(BaseModel):
+    run_id: UUID
+    status: str
+    all_passed: bool
+    checks: list[CompletionCheckOut]
+    gaps: list[str]
+
+
 class EventOut(BaseModel):
     id: UUID
     aggregate_id: UUID

@@ -39,6 +39,33 @@
       <p v-if="run.abort_reason"><strong>中止原因：</strong>{{ run.abort_reason }}</p>
     </div>
 
+    <div class="card" style="margin-bottom: 16px">
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap">
+        <h3 style="margin: 0">收尾协议检查</h3>
+        <n-tag size="small" :type="checksAllPassed ? 'success' : 'error'">
+          {{ checksAllPassed ? '全部通过，可完成' : `${checkGaps.length} 项未通过` }}
+        </n-tag>
+      </div>
+      <ul style="list-style: none; padding: 0; margin: 12px 0 0">
+        <li
+          v-for="c in completionChecks"
+          :key="c.key"
+          style="display: flex; align-items: center; gap: 8px; padding: 4px 0"
+        >
+          <n-tag size="small" :type="c.passed ? 'success' : 'error'">
+            {{ c.passed ? '通过' : '未通过' }}
+          </n-tag>
+          <span :class="{ muted: c.passed }">{{ c.label }}</span>
+        </li>
+      </ul>
+      <p v-if="checkGaps.length" style="margin: 12px 0 0; color: #b04a4a">
+        缺口：{{ checkGaps.join('；') }}
+      </p>
+      <p v-if="!isResearcher" class="muted" style="margin: 12px 0 0">
+        审计员仅可查看检查结果，不能代点完成。
+      </p>
+    </div>
+
     <div class="grid-2" style="margin-bottom: 16px">
       <div class="card">
         <h3 style="margin-top: 0">指标（投影）</h3>
@@ -85,7 +112,18 @@
         <div style="flex: 1; min-width: 220px">
           <n-input v-model:value="completeSummary" type="textarea" placeholder="完成摘要" :rows="2" />
         </div>
-        <n-button type="success" :loading="busy" @click="doComplete">CompleteRun</n-button>
+        <n-button
+          type="success"
+          :loading="busy"
+          :disabled="!checksAllPassed"
+          :title="checkGaps.length ? `未通过：${checkGaps.join('；')}` : ''"
+          @click="doComplete"
+        >
+          CompleteRun
+        </n-button>
+        <span v-if="!checksAllPassed" class="muted" style="font-size: 12px">
+          材料不齐，按钮不可用（{{ checkGaps.join('；') }}）
+        </span>
         <div style="flex: 1; min-width: 220px">
           <n-input v-model:value="abortReason" type="textarea" placeholder="中止原因" :rows="2" />
         </div>
@@ -104,6 +142,7 @@ import {
   abortRun,
   attachArtifact,
   completeRun,
+  getCompletionChecks,
   getRun,
   recordMetric,
 } from '../api/client'
@@ -113,6 +152,7 @@ const route = useRoute()
 const auth = useAuthStore()
 const message = useMessage()
 const run = ref(null)
+const completionChecks = ref([])
 const busy = ref(false)
 const completeSummary = ref('')
 const abortReason = ref('')
@@ -125,7 +165,14 @@ const artifact = reactive({
   media_type: 'application/octet-stream',
 })
 
-const canWrite = computed(() => auth.role === 'researcher' && run.value?.status === 'running')
+const canWrite = computed(() => isResearcher.value && run.value?.status === 'running')
+const isResearcher = computed(() => auth.role === 'researcher')
+const checksAllPassed = computed(
+  () => completionChecks.value.length > 0 && completionChecks.value.every((c) => c.passed),
+)
+const checkGaps = computed(() =>
+  completionChecks.value.filter((c) => !c.passed).map((c) => c.label),
+)
 const statusLabel = computed(() => {
   const m = { running: '进行中', completed: '已完成', aborted: '已中止' }
   return m[run.value?.status] || run.value?.status
@@ -157,6 +204,11 @@ function randomHex(n) {
 
 async function load() {
   run.value = await getRun(route.params.id)
+  try {
+    completionChecks.value = (await getCompletionChecks(route.params.id)).checks
+  } catch (e) {
+    completionChecks.value = []
+  }
 }
 
 async function withBusy(fn) {
@@ -198,6 +250,10 @@ function doArtifact() {
 }
 
 function doComplete() {
+  if (!checksAllPassed.value) {
+    message.error(`无法完成，缺口：${checkGaps.value.join('；')}`)
+    return
+  }
   if (!completeSummary.value.trim()) {
     message.warning('请填写完成摘要')
     return

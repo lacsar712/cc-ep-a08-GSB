@@ -67,6 +67,11 @@ export async function abortRun(id, body) {
   return data
 }
 
+export async function getCompletionChecks(id) {
+  const { data } = await api.get(`/runs/${id}/completion-checks`)
+  return data
+}
+
 export async function getEvents(id) {
   const { data } = await api.get(`/runs/${id}/events`)
   return data

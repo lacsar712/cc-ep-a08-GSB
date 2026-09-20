@@ -7,11 +7,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.cqrs import (
+    CompletionCheckError,
     ConflictError,
     DomainError,
     abort_run,
     attach_artifact,
     complete_run,
+    evaluate_completion_checks,
     list_events,
     rebuild_projection_from_events,
     record_metric,
@@ -77,15 +79,28 @@ def test_start_and_complete_happy_path(db):
     assert run.version == 2
     assert len(run.metrics_json) == 1
 
+    run = attach_artifact(
+        db,
+        run_id=run.id,
+        actor="researcher",
+        name="model.bin",
+        uri="s3://lab/model.bin",
+        content_sha256=sha("model-bin"),
+        media_type="application/octet-stream",
+        expected_version=2,
+    )
+    assert run.version == 3
+    assert len(run.artifacts_json) == 1
+
     run = complete_run(
         db,
         run_id=run.id,
         actor="researcher",
         result_summary="done",
-        expected_version=2,
+        expected_version=3,
     )
     assert run.status == "completed"
-    assert run.version == 3
+    assert run.version == 4
 
     with pytest.raises(ConflictError):
         record_metric(
@@ -95,7 +110,7 @@ def test_start_and_complete_happy_path(db):
             name="acc",
             value=0.95,
             step=2,
-            expected_version=3,
+            expected_version=4,
         )
 
 
@@ -218,3 +233,101 @@ def test_cannot_command_before_start(db):
             step=0,
             expected_version=0,
         )
+
+
+def _start(db, suffix: str):
+    return start_run(
+        db,
+        actor="researcher",
+        project="p1",
+        name=f"n-{suffix}",
+        dataset_content_sha256=sha(f"ds-{suffix}"),
+        code_commit_sha="abc1234",
+        description=None,
+    )
+
+
+def test_complete_blocked_without_metrics_and_artifacts(db):
+    run = _start(db, "bare")
+    checks = evaluate_completion_checks(db.get(RunProjection, run.id))
+    assert [c["passed"] for c in checks] == [False, False, True]
+
+    with pytest.raises(CompletionCheckError) as exc:
+        complete_run(
+            db,
+            run_id=run.id,
+            actor="researcher",
+            result_summary="done",
+            expected_version=run.version,
+        )
+    assert "指标" in exc.value.message and "产物" in exc.value.message
+    assert exc.value.status_code == 422
+    assert db.get(RunProjection, run.id).status == "running"
+
+
+def test_complete_blocked_when_metric_only(db):
+    run = _start(db, "metric-only")
+    run = record_metric(
+        db,
+        run_id=run.id,
+        actor="researcher",
+        name="loss",
+        value=0.4,
+        step=1,
+        expected_version=run.version,
+    )
+    checks = {c["key"]: c["passed"] for c in evaluate_completion_checks(db.get(RunProjection, run.id))}
+    assert checks == {"has_metric": True, "has_artifact": False, "has_provenance_ids": True}
+
+    with pytest.raises(CompletionCheckError):
+        complete_run(
+            db,
+            run_id=run.id,
+            actor="researcher",
+            result_summary="done",
+            expected_version=run.version,
+        )
+
+
+def test_complete_allowed_when_all_checks_pass(db):
+    run = _start(db, "full")
+    run = record_metric(
+        db,
+        run_id=run.id,
+        actor="researcher",
+        name="acc",
+        value=0.9,
+        step=1,
+        expected_version=run.version,
+    )
+    run = attach_artifact(
+        db,
+        run_id=run.id,
+        actor="researcher",
+        name="model.bin",
+        uri="s3://lab/model.bin",
+        content_sha256=sha("model"),
+        media_type=None,
+        expected_version=run.version,
+    )
+    assert all(c["passed"] for c in evaluate_completion_checks(db.get(RunProjection, run.id)))
+    run = complete_run(
+        db,
+        run_id=run.id,
+        actor="researcher",
+        result_summary="done",
+        expected_version=run.version,
+    )
+    assert run.status == "completed"
+
+
+def test_abort_does_not_require_completion_checks(db):
+    run = _start(db, "abort")
+    run = abort_run(
+        db,
+        run_id=run.id,
+        actor="researcher",
+        reason="OOM",
+        expected_version=run.version,
+    )
+    assert run.status == "aborted"

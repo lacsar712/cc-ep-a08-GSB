@@ -11,6 +11,7 @@ from app.cqrs import (
     abort_run,
     attach_artifact,
     complete_run,
+    evaluate_completion_checks,
     list_events,
     record_metric,
     start_run,
@@ -21,6 +22,7 @@ from app.schemas import (
     AbortRunCommand,
     AttachArtifactCommand,
     CompleteRunCommand,
+    CompletionChecksOut,
     EventOut,
     LineageOut,
     LoginRequest,
@@ -101,6 +103,25 @@ def get_run(
     if not proj:
         raise HTTPException(status_code=404, detail="Run 不存在")
     return proj
+
+
+@router.get("/runs/{run_id}/completion-checks", response_model=CompletionChecksOut)
+def get_completion_checks(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    proj = db.get(RunProjection, run_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Run 不存在")
+    checks = evaluate_completion_checks(proj)
+    return CompletionChecksOut(
+        run_id=proj.id,
+        status=proj.status,
+        all_passed=all(c["passed"] for c in checks),
+        checks=checks,
+        gaps=[c["label"] for c in checks if not c["passed"]],
+    )
 
 
 @router.post("/runs/{run_id}/metrics", response_model=RunOut)

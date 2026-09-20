@@ -26,6 +26,13 @@ class ConflictError(DomainError):
         super().__init__(message, status_code=409)
 
 
+class CompletionCheckError(DomainError):
+    """完成前协议检查未通过（材料不齐不能收尾）。"""
+
+    def __init__(self, gaps: list[str]):
+        super().__init__("完成前协议检查未通过：" + "；".join(gaps), status_code=422)
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -146,6 +153,46 @@ def _check_expected_version(proj: RunProjection | None, expected_version: int) -
         )
 
 
+# 完成实验前的协议检查清单（材料不齐不能收尾）
+COMPLETION_CHECKS = (
+    {
+        "key": "has_metric",
+        "label": "已有至少一条指标",
+    },
+    {
+        "key": "has_artifact",
+        "label": "已挂载至少一件产物",
+    },
+    {
+        "key": "has_provenance_ids",
+        "label": "数据集哈希与代码提交号均已填写",
+    },
+)
+
+
+def evaluate_completion_checks(proj: RunProjection | None) -> list[dict[str, Any]]:
+    """逐项评估完成协议；Run 不存在时所有检查按未通过处理。"""
+    checks = [
+        bool(proj and proj.metrics_json),
+        bool(proj and proj.artifacts_json),
+        bool(
+            proj
+            and (proj.dataset_content_sha256 or "").strip()
+            and (proj.code_commit_sha or "").strip()
+        ),
+    ]
+    return [
+        {**spec, "passed": passed}
+        for spec, passed in zip(COMPLETION_CHECKS, checks, strict=True)
+    ]
+
+
+def _require_completion_checks(proj: RunProjection) -> None:
+    gaps = [c["label"] for c in evaluate_completion_checks(proj) if not c["passed"]]
+    if gaps:
+        raise CompletionCheckError(gaps)
+
+
 def start_run(
     db: Session,
     *,
@@ -259,6 +306,7 @@ def complete_run(
     proj = _get_projection(db, run_id)
     _require_running(proj)
     _check_expected_version(proj, expected_version)
+    _require_completion_checks(proj)
 
     event = _append_event(
         db,
